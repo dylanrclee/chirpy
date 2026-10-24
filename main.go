@@ -4,14 +4,24 @@ import (
 	"net/http"
 )
 
+func Handler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(200)
+	w.Write([]byte("OK"))
+}
+
 func main() {
-	ServeMux_handler := http.NewServeMux()
+	ServeMux := http.NewServeMux()
+
 	dir := http.Dir(".")
-	ServeMux_handler.Handle("/", http.FileServer(dir))
+	wrappedhandler := http.StripPrefix("/app", http.FileServer(dir))
+	ServeMux.Handle("/app/", wrappedhandler)
+
+	ServeMux.HandleFunc("/healthz", Handler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
-		Handler: ServeMux_handler,
+		Handler: ServeMux,
 	}
 
 	chripy_server.ListenAndServe()
