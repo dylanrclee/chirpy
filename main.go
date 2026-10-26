@@ -23,10 +23,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func (cfg *apiConfig) reqestnumHandler(w http.ResponseWriter, r *http.Request) {
-	cur_hits := cfg.fileserverHits.Load()
-	hits_string := fmt.Sprintf("Hits: %v", cur_hits)
-	w.Write([]byte(hits_string))
+func (cfg *apiConfig) htmlHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(200)
+	html_text := fmt.Sprintf(
+		`<html>
+<body>
+<h1>Welcome, Chirpy Admin</h1>
+<p>Chirpy has been visited %d times!</p>
+</body>
+</html>`, cfg.fileserverHits.Load())
+	w.Write([]byte(html_text))
 }
 
 func (cfg *apiConfig) resetnumHandler(w http.ResponseWriter, r *http.Request) {
@@ -41,9 +48,9 @@ func main() {
 	wrappedhandler := http.StripPrefix("/app", http.FileServer(dir))
 	ServeMux.Handle("/app/", apiCfg.middlewareMetricsInc(wrappedhandler))
 
-	ServeMux.HandleFunc("/healthz", Handler)
-	ServeMux.HandleFunc("/metrics", apiCfg.reqestnumHandler)
-	ServeMux.HandleFunc("/reset", apiCfg.resetnumHandler)
+	ServeMux.HandleFunc("GET /api/healthz", Handler)
+	ServeMux.HandleFunc("GET /admin/metrics", apiCfg.htmlHandler)
+	ServeMux.HandleFunc("POST /admin/reset", apiCfg.resetnumHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
