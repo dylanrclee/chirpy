@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -55,19 +56,39 @@ func (cfg *apiConfig) validateHandler(w http.ResponseWriter, r *http.Request) {
 
 	if len(params.Body) > 140 {
 		respondWithError(w, 400, "Chirp is too long")
-	} else {
-		type payload struct {
-			Valid bool `json:"valid"`
-		}
-		payload_val := payload{
-			Valid: true,
-		}
-		respondWithJSON(w, 200, payload_val)
+		return
 	}
+
+	cleaned_text := censortextfromjsonbody(params.Body, []string{"kerfuffle", "sharbert", "fornax"}, "****")
+
+	type payload struct {
+		Cleaned_body string `json:"cleaned_body"`
+	}
+	payload_val := payload{
+		Cleaned_body: cleaned_text,
+	}
+	respondWithJSON(w, 200, payload_val)
+
 }
 
 func (cfg *apiConfig) resetnumHandler(w http.ResponseWriter, r *http.Request) {
 	cfg.fileserverHits.Swap(0)
+}
+
+func censortextfromjsonbody(params string, censored_list []string, replacement_text string) string {
+	split_text := strings.Split(params, " ")
+	cleaned_slice := make([]string, len(split_text))
+	for i, item := range split_text {
+		for _, censored_item := range censored_list {
+			if strings.ToLower(item) == censored_item {
+				cleaned_slice[i] = replacement_text
+				break
+			} else {
+				cleaned_slice[i] = item
+			}
+		}
+	}
+	return strings.Join(cleaned_slice, " ")
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
