@@ -9,8 +9,10 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/dylanrclee/chirpy/internal/database"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 
 	_ "github.com/lib/pq"
@@ -19,6 +21,14 @@ import (
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbqueries      *database.Queries
+	platform       string
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -80,7 +90,40 @@ func (cfg *apiConfig) validateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) resetnumHandler(w http.ResponseWriter, r *http.Request) {
+	if cfg.platform != "dev" {
+		respondWithError(w, 403, "Forbidden")
+		return
+	}
+
 	cfg.fileserverHits.Swap(0)
+
+	err := cfg.dbqueries.DeleteAllUsers(r.Context())
+	if err != nil {
+		log.Printf("Error in DeleteAllUsers sql function: %s\n", err)
+	}
+	fmt.Printf("Successfully deleted all users")
+}
+
+func (cfg *apiConfig) createuserHandler(w http.ResponseWriter, r *http.Request) {
+	var u User
+	err := json.NewDecoder(r.Body).Decode(&u)
+	if err != nil {
+		log.Printf("Error in decoding user from request body: %s", err)
+		return
+	}
+
+	user, err := cfg.dbqueries.CreateUser(r.Context(), u.Email)
+	if err != nil {
+		log.Printf("Error in CreateUser sql function: %s", err)
+		return
+	}
+	response_user := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+	respondWithJSON(w, 201, response_user)
 }
 
 func censortextfromjsonbody(params string, censored_list []string, replacement_text string) string {
@@ -135,18 +178,20 @@ func main() {
 	err := godotenv.Load()
 	if err != nil {
 		fmt.Printf("Error creating godotenv: %s", err)
+		return
 	}
-
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
-		fmt.Printf("Error ")
+		fmt.Printf("Error creating connection to database: %s", err)
+		return
 	}
 	dbQueries := database.New(db)
 
 	ServeMux := http.NewServeMux()
 	apiCfg := apiConfig{
 		dbqueries: dbQueries,
+		platform:  os.Getenv("PLATFORM"),
 	}
 
 	dir := http.Dir(".")
@@ -157,6 +202,7 @@ func main() {
 	ServeMux.HandleFunc("GET /admin/metrics", apiCfg.htmlHandler)
 	ServeMux.HandleFunc("POST /admin/reset", apiCfg.resetnumHandler)
 	ServeMux.HandleFunc("POST /api/validate_chirp", apiCfg.validateHandler)
+	ServeMux.HandleFunc("POST /api/users", apiCfg.createuserHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
