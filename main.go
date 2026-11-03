@@ -107,6 +107,28 @@ func (cfg *apiConfig) createchirpHandler(w http.ResponseWriter, r *http.Request)
 	respondWithJSON(w, 201, response_chirp)
 }
 
+func (cfg *apiConfig) retrieveallchirpsHandler(w http.ResponseWriter, r *http.Request) {
+	chirps, err := cfg.dbqueries.RetrieveAllChirps(r.Context())
+	if err != nil {
+		log.Printf("Error in retrieveallchirpsHandler: %s", err)
+	}
+
+	chirp_list := make([]Chirp, len(chirps))
+
+	for i, chirp := range chirps {
+		chirp_list_item := Chirp{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		}
+		chirp_list[i] = chirp_list_item
+	}
+
+	respondWithJSON(w, 200, chirp_list)
+}
+
 func (cfg *apiConfig) validateHandler(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Body  string `json:"body"`
@@ -151,7 +173,7 @@ func (cfg *apiConfig) resetnumHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Error in DeleteAllUsers sql function: %s\n", err)
 	}
-	fmt.Printf("Successfully deleted all users")
+	fmt.Printf("Successfully deleted all users\n")
 }
 
 func (cfg *apiConfig) createuserHandler(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +276,7 @@ func main() {
 	ServeMux.HandleFunc("POST /api/validate_chirp", apiCfg.validateHandler)
 	ServeMux.HandleFunc("POST /api/users", apiCfg.createuserHandler)
 	ServeMux.HandleFunc("POST /api/chirps", apiCfg.createchirpHandler)
+	ServeMux.HandleFunc("GET /api/chirps", apiCfg.retrieveallchirpsHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
