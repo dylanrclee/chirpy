@@ -31,6 +31,14 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.fileserverHits.Add(1)
@@ -55,6 +63,48 @@ func (cfg *apiConfig) htmlHandler(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`, cfg.fileserverHits.Load())
 	w.Write([]byte(html_text))
+}
+
+func (cfg *apiConfig) createchirpHandler(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body   string    `json:"body"`
+		UserId uuid.UUID `json:"user_id"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		return
+	}
+
+	if len(params.Body) > 140 {
+		respondWithError(w, 400, "Chirp is too long")
+		return
+	}
+
+	cleaned_text := censortextfromjsonbody(params.Body, []string{"kerfuffle", "sharbert", "fornax"}, "****")
+
+	chirp_params := database.CreateChirpParams{
+		Body:   cleaned_text,
+		UserID: params.UserId,
+	}
+	db_chirp, err := cfg.dbqueries.CreateChirp(r.Context(), chirp_params)
+	if err != nil {
+		log.Printf("Error in createchirpHandler sql function: %s", err)
+		return
+	}
+
+	response_chirp := Chirp{
+		ID:        db_chirp.ID,
+		CreatedAt: db_chirp.CreatedAt,
+		UpdatedAt: db_chirp.UpdatedAt,
+		Body:      db_chirp.Body,
+		UserID:    db_chirp.UserID,
+	}
+
+	respondWithJSON(w, 201, response_chirp)
 }
 
 func (cfg *apiConfig) validateHandler(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +253,7 @@ func main() {
 	ServeMux.HandleFunc("POST /admin/reset", apiCfg.resetnumHandler)
 	ServeMux.HandleFunc("POST /api/validate_chirp", apiCfg.validateHandler)
 	ServeMux.HandleFunc("POST /api/users", apiCfg.createuserHandler)
+	ServeMux.HandleFunc("POST /api/chirps", apiCfg.createchirpHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
