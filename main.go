@@ -129,6 +129,34 @@ func (cfg *apiConfig) retrieveallchirpsHandler(w http.ResponseWriter, r *http.Re
 	respondWithJSON(w, 200, chirp_list)
 }
 
+func (cfg *apiConfig) retrieveonechirpHandler(w http.ResponseWriter, r *http.Request) {
+
+	id_string := r.PathValue("chirpID")
+	id_uuid, err := uuid.Parse(id_string)
+	if err != nil {
+		log.Printf("Error parsing id string for chirp: %s", err)
+	}
+
+	chirp, err := cfg.dbqueries.RetrieveOneChirp(r.Context(), id_uuid)
+	if err == sql.ErrNoRows {
+		respondWithError(w, 404, "Chirp not found")
+		return
+	}
+	if err != nil {
+		log.Printf("Error in RetrieveOneChirp function: %s", err)
+	}
+
+	response_chirp := Chirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	}
+	respondWithJSON(w, 200, response_chirp)
+
+}
+
 func (cfg *apiConfig) validateHandler(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Body  string `json:"body"`
@@ -277,6 +305,7 @@ func main() {
 	ServeMux.HandleFunc("POST /api/users", apiCfg.createuserHandler)
 	ServeMux.HandleFunc("POST /api/chirps", apiCfg.createchirpHandler)
 	ServeMux.HandleFunc("GET /api/chirps", apiCfg.retrieveallchirpsHandler)
+	ServeMux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.retrieveonechirpHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
