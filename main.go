@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dylanrclee/chirpy/internal/auth"
 	"github.com/dylanrclee/chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -29,6 +30,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Password  string    `json:"password"`
 }
 
 type Chirp struct {
@@ -37,6 +39,11 @@ type Chirp struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Body      string    `json:"body"`
 	UserID    uuid.UUID `json:"user_id"`
+}
+
+type UserPassword struct {
+	Password string `json:"password"`
+	Email    string `json:"email"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -75,6 +82,7 @@ func (cfg *apiConfig) createchirpHandler(w http.ResponseWriter, r *http.Request)
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
+		respondWithError(w, 500, "Couldn't decode parameters")
 		log.Printf("Error decoding parameters: %s", err)
 		return
 	}
@@ -92,6 +100,7 @@ func (cfg *apiConfig) createchirpHandler(w http.ResponseWriter, r *http.Request)
 	}
 	db_chirp, err := cfg.dbqueries.CreateChirp(r.Context(), chirp_params)
 	if err != nil {
+		respondWithError(w, 500, "Couldn't create chirp")
 		log.Printf("Error in createchirpHandler sql function: %s", err)
 		return
 	}
@@ -110,7 +119,9 @@ func (cfg *apiConfig) createchirpHandler(w http.ResponseWriter, r *http.Request)
 func (cfg *apiConfig) retrieveallchirpsHandler(w http.ResponseWriter, r *http.Request) {
 	chirps, err := cfg.dbqueries.RetrieveAllChirps(r.Context())
 	if err != nil {
+		respondWithError(w, 500, "Error retrieving all chirps")
 		log.Printf("Error in retrieveallchirpsHandler: %s", err)
+		return
 	}
 
 	chirp_list := make([]Chirp, len(chirps))
@@ -134,7 +145,9 @@ func (cfg *apiConfig) retrieveonechirpHandler(w http.ResponseWriter, r *http.Req
 	id_string := r.PathValue("chirpID")
 	id_uuid, err := uuid.Parse(id_string)
 	if err != nil {
+		respondWithError(w, 500, "Error searching for chirp")
 		log.Printf("Error parsing id string for chirp: %s", err)
+		return
 	}
 
 	chirp, err := cfg.dbqueries.RetrieveOneChirp(r.Context(), id_uuid)
@@ -143,7 +156,9 @@ func (cfg *apiConfig) retrieveonechirpHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err != nil {
+		respondWithError(w, 500, "Error searching for chirp")
 		log.Printf("Error in RetrieveOneChirp function: %s", err)
+		return
 	}
 
 	response_chirp := Chirp{
@@ -168,6 +183,7 @@ func (cfg *apiConfig) validateHandler(w http.ResponseWriter, r *http.Request) {
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
+		respondWithError(w, 500, "Internal error in validation process")
 		log.Printf("Error decoding parameters: %s", err)
 		return
 	}
@@ -200,6 +216,7 @@ func (cfg *apiConfig) resetnumHandler(w http.ResponseWriter, r *http.Request) {
 	err := cfg.dbqueries.DeleteAllUsers(r.Context())
 	if err != nil {
 		log.Printf("Error in DeleteAllUsers sql function: %s\n", err)
+		return
 	}
 	fmt.Printf("Successfully deleted all users\n")
 }
@@ -208,15 +225,30 @@ func (cfg *apiConfig) createuserHandler(w http.ResponseWriter, r *http.Request) 
 	var u User
 	err := json.NewDecoder(r.Body).Decode(&u)
 	if err != nil {
+		respondWithError(w, 500, "User not created")
 		log.Printf("Error in decoding user from request body: %s", err)
 		return
 	}
 
-	user, err := cfg.dbqueries.CreateUser(r.Context(), u.Email)
+	hashed_password, err := auth.HashPassword(u.Password)
 	if err != nil {
+		respondWithError(w, 500, "User not created")
+		log.Printf("Error in hashing password: %s", err)
+		return
+	}
+
+	upass := database.CreateUserParams{
+		Email:          u.Email,
+		HashedPassword: hashed_password,
+	}
+
+	user, err := cfg.dbqueries.CreateUser(r.Context(), upass)
+	if err != nil {
+		respondWithError(w, 500, "User not created")
 		log.Printf("Error in CreateUser sql function: %s", err)
 		return
 	}
+
 	response_user := User{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
@@ -224,6 +256,40 @@ func (cfg *apiConfig) createuserHandler(w http.ResponseWriter, r *http.Request) 
 		Email:     user.Email,
 	}
 	respondWithJSON(w, 201, response_user)
+}
+
+func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
+	var u User
+	err := json.NewDecoder(r.Body).Decode(&u)
+	if err != nil {
+		respondWithError(w, 500, "Unable to login")
+		log.Printf("Error in decoding user from request body: %s", err)
+		return
+	}
+
+	db_user, err := cfg.dbqueries.SearchUserEmail(r.Context(), u.Email)
+	if err != nil {
+		respondWithError(w, 401, "Incorrect email or password")
+		return
+	}
+
+	boolean, err := auth.CheckPasswordHash(u.Password, db_user.HashedPassword)
+	if err != nil {
+		respondWithError(w, 401, "Incorrect email or password")
+		return
+	}
+
+	response_user := User{
+		ID:        db_user.ID,
+		CreatedAt: db_user.CreatedAt,
+		UpdatedAt: db_user.UpdatedAt,
+		Email:     db_user.Email,
+	}
+	if boolean {
+		respondWithJSON(w, 200, response_user)
+	} else {
+		respondWithError(w, 401, "Incorrect email or password")
+	}
 }
 
 func censortextfromjsonbody(params string, censored_list []string, replacement_text string) string {
@@ -306,6 +372,7 @@ func main() {
 	ServeMux.HandleFunc("POST /api/chirps", apiCfg.createchirpHandler)
 	ServeMux.HandleFunc("GET /api/chirps", apiCfg.retrieveallchirpsHandler)
 	ServeMux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.retrieveonechirpHandler)
+	ServeMux.HandleFunc("POST /api/login", apiCfg.loginHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
