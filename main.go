@@ -23,6 +23,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbqueries      *database.Queries
 	platform       string
+	secret         string
 }
 
 type User struct {
@@ -30,7 +31,17 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
-	Password  string    `json:"password"`
+}
+
+type UserWithPassword struct {
+	User
+	Password string `json:"password"`
+	Expires  int    `json:"expires_in_seconds"`
+}
+
+type UserLogin struct {
+	User
+	Token string `json:"token"`
 }
 
 type Chirp struct {
@@ -39,11 +50,6 @@ type Chirp struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Body      string    `json:"body"`
 	UserID    uuid.UUID `json:"user_id"`
-}
-
-type UserPassword struct {
-	Password string `json:"password"`
-	Email    string `json:"email"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -73,17 +79,26 @@ func (cfg *apiConfig) htmlHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) createchirpHandler(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		Body   string    `json:"body"`
-		UserId uuid.UUID `json:"user_id"`
-	}
-
 	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
+	params := Chirp{}
 	err := decoder.Decode(&params)
 	if err != nil {
 		respondWithError(w, 500, "Couldn't decode parameters")
 		log.Printf("Error decoding parameters: %s", err)
+		return
+	}
+
+	auth_string, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		log.Printf("No authentication header found: %s", err)
+		return
+	}
+
+	auth_user, err := auth.ValidateJWT(auth_string, cfg.secret)
+	if err != nil {
+		respondWithError(w, 401, "Unauthroized")
+		log.Printf("Token string does not equal secret string %s", err)
 		return
 	}
 
@@ -96,7 +111,7 @@ func (cfg *apiConfig) createchirpHandler(w http.ResponseWriter, r *http.Request)
 
 	chirp_params := database.CreateChirpParams{
 		Body:   cleaned_text,
-		UserID: params.UserId,
+		UserID: auth_user,
 	}
 	db_chirp, err := cfg.dbqueries.CreateChirp(r.Context(), chirp_params)
 	if err != nil {
@@ -222,7 +237,7 @@ func (cfg *apiConfig) resetnumHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) createuserHandler(w http.ResponseWriter, r *http.Request) {
-	var u User
+	var u UserWithPassword
 	err := json.NewDecoder(r.Body).Decode(&u)
 	if err != nil {
 		respondWithError(w, 500, "User not created")
@@ -259,7 +274,7 @@ func (cfg *apiConfig) createuserHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
-	var u User
+	var u UserWithPassword
 	err := json.NewDecoder(r.Body).Decode(&u)
 	if err != nil {
 		respondWithError(w, 500, "Unable to login")
@@ -273,17 +288,29 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if u.Expires == 0 {
+		u.Expires = 60 * 60
+	}
+
+	token, err := auth.MakeJWT(db_user.ID, cfg.secret, time.Duration(u.Expires)*time.Second)
+	if err != nil {
+		respondWithError(w, 500, "Unable to login")
+		log.Printf("Error in making login token: %s", err)
+		return
+	}
+
 	boolean, err := auth.CheckPasswordHash(u.Password, db_user.HashedPassword)
 	if err != nil {
 		respondWithError(w, 401, "Incorrect email or password")
 		return
 	}
 
-	response_user := User{
+	response_user := UserLogin{
 		ID:        db_user.ID,
 		CreatedAt: db_user.CreatedAt,
 		UpdatedAt: db_user.UpdatedAt,
 		Email:     db_user.Email,
+		Token:     token,
 	}
 	if boolean {
 		respondWithJSON(w, 200, response_user)
@@ -358,6 +385,7 @@ func main() {
 	apiCfg := apiConfig{
 		dbqueries: dbQueries,
 		platform:  os.Getenv("PLATFORM"),
+		secret:    os.Getenv("SECRET"),
 	}
 
 	dir := http.Dir(".")

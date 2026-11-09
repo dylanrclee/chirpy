@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
@@ -67,5 +68,30 @@ func TestExpiredToken(t *testing.T) {
 
 	if returned_user == userID {
 		t.Fatalf("Expected user to not be returned: %s", err)
+	}
+}
+
+func TestGetBearerToken(t *testing.T) {
+	headers := make(http.Header)
+	headers.Set("Authorization", "Bearer 12345")
+
+	auth_string, err := GetBearerToken(headers)
+	if err != nil {
+		t.Fatalf("No error expected in getting authorization string: %s", err)
+	}
+	if auth_string != "12345" {
+		t.Fatalf("Wrong authorization string returned: %s", err)
+	}
+}
+
+func TestGetBearerTokenHeaderDoesNotExist(t *testing.T) {
+	headers := make(http.Header)
+
+	auth_string, err := GetBearerToken(headers)
+	if err == nil {
+		t.Fatalf("Error expected in getting authorization string: %s", err)
+	}
+	if auth_string != "" {
+		t.Fatalf("Expected no authorization string to be returned: %s", err)
 	}
 }
