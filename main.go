@@ -41,7 +41,8 @@ type UserWithPassword struct {
 
 type UserLogin struct {
 	User
-	Token string `json:"token"`
+	Token         string `json:"token"`
+	Refresh_token string `json:"refresh_token"`
 }
 
 type Chirp struct {
@@ -288,11 +289,7 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if u.Expires == 0 {
-		u.Expires = 60 * 60
-	}
-
-	token, err := auth.MakeJWT(db_user.ID, cfg.secret, time.Duration(u.Expires)*time.Second)
+	token, err := auth.MakeJWT(db_user.ID, cfg.secret, time.Duration(60*60)*time.Second)
 	if err != nil {
 		respondWithError(w, 500, "Unable to login")
 		log.Printf("Error in making login token: %s", err)
@@ -305,12 +302,35 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	refresh_token, err := auth.MakeRefreshToken()
+	if err != nil {
+		respondWithError(w, 500, "Unable to login")
+		log.Printf("Error in making refresh token: %s", err)
+		return
+	}
+
+	token_params := database.CreateTokenParams{
+		Token:     refresh_token,
+		ExpiresAt: time.Now().Add(time.Duration(24*60) * time.Hour),
+		UserID:    db_user.ID,
+	}
+
+	db_refresh_token, err := cfg.dbqueries.CreateToken(r.Context(), token_params)
+	if err != nil {
+		respondWithError(w, 500, "Unable to login")
+		log.Printf("Error in adding refresh token to database: %s", err)
+		return
+	}
+
 	response_user := UserLogin{
-		ID:        db_user.ID,
-		CreatedAt: db_user.CreatedAt,
-		UpdatedAt: db_user.UpdatedAt,
-		Email:     db_user.Email,
-		Token:     token,
+		User: User{
+			ID:        db_user.ID,
+			CreatedAt: db_user.CreatedAt,
+			UpdatedAt: db_user.UpdatedAt,
+			Email:     db_user.Email,
+		},
+		Token:         token,
+		Refresh_token: db_refresh_token.Token,
 	}
 	if boolean {
 		respondWithJSON(w, 200, response_user)

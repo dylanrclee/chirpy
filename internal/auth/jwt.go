@@ -54,6 +54,14 @@ func GetBearerToken(headers http.Header) (string, error) {
 	if auth_string == "" {
 		return "", fmt.Errorf("Authorization header does not exist")
 	}
+
 	auth_strings := strings.Split(auth_string, " ")
+	if len(auth_strings) != 2 {
+		return "", fmt.Errorf("Authorization header is not right length")
+	}
+
+	if auth_strings[0] != "Bearer" {
+		return "", fmt.Errorf("Authorization header does not contain 'Bearer'")
+	}
 	return auth_strings[1], nil
 }
