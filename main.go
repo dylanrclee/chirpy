@@ -45,6 +45,10 @@ type UserLogin struct {
 	Refresh_token string `json:"refresh_token"`
 }
 
+type TokenResponse struct {
+	Token string `json:"token"`
+}
+
 type Chirp struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
@@ -339,6 +343,71 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (cfg *apiConfig) refreshHandler(w http.ResponseWriter, r *http.Request) {
+	refresh_token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 500, "Unable to login")
+		log.Printf("Error retrieving refresh token: %s", err)
+		return
+	}
+
+	db_refresh_token_info, err := cfg.dbqueries.RetrieveOneToken(r.Context(), refresh_token)
+	if err != nil {
+		respondWithError(w, 401, "Refresh token does not exist")
+		log.Printf("Error finding refresh token in database: %s", err)
+		return
+	}
+
+	if db_refresh_token_info.ExpiresAt.Before(time.Now()) {
+		respondWithError(w, 401, "Refresh token expired")
+		log.Printf("Error due to refresh token expiration: %s", err)
+		return
+	}
+
+	if db_refresh_token_info.RevokedAt.Valid {
+		respondWithError(w, 401, "Refresh token revoked")
+		log.Printf("Error due to refresh token revoked: %s", err)
+		return
+	}
+
+	token, err := auth.MakeJWT(db_refresh_token_info.UserID, cfg.secret, time.Duration(60*60)*time.Second)
+	if err != nil {
+		respondWithError(w, 500, "Unable to make login token")
+		log.Printf("Error in making login token: %s", err)
+		return
+	}
+
+	token_response := TokenResponse{
+		Token: token,
+	}
+	respondWithJSON(w, 200, token_response)
+}
+
+func (cfg *apiConfig) revokeHandler(w http.ResponseWriter, r *http.Request) {
+	refresh_token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 500, "Internal error")
+		log.Printf("Error retrieving refresh token: %s", err)
+		return
+	}
+
+	db_refresh_token_info, err := cfg.dbqueries.RetrieveOneToken(r.Context(), refresh_token)
+	if err != nil {
+		respondWithError(w, 401, "Refresh token does not exist")
+		log.Printf("Error finding refresh token in database: %s", err)
+		return
+	}
+
+	_, err = cfg.dbqueries.RevokeRefreshToken(r.Context(), db_refresh_token_info.Token)
+	if err != nil {
+		respondWithError(w, 500, "Internal error")
+		log.Printf("Error revoking refresh token %s", err)
+		return
+	}
+
+	respondWithJSON(w, 204, "")
+}
+
 func censortextfromjsonbody(params string, censored_list []string, replacement_text string) string {
 	split_text := strings.Split(params, " ")
 	cleaned_slice := make([]string, len(split_text))
@@ -421,6 +490,8 @@ func main() {
 	ServeMux.HandleFunc("GET /api/chirps", apiCfg.retrieveallchirpsHandler)
 	ServeMux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.retrieveonechirpHandler)
 	ServeMux.HandleFunc("POST /api/login", apiCfg.loginHandler)
+	ServeMux.HandleFunc("POST /api/refresh", apiCfg.refreshHandler)
+	ServeMux.HandleFunc("POST /api/revoke", apiCfg.revokeHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
