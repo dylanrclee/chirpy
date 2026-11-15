@@ -343,6 +343,64 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (cfg *apiConfig) updateuserHandler(w http.ResponseWriter, r *http.Request) {
+	refresh_token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		log.Printf("Error retrieving refresh token: %s\n", err)
+		return
+	}
+
+	var u UserWithPassword
+	err = json.NewDecoder(r.Body).Decode(&u)
+	if err != nil {
+		respondWithError(w, 500, "Unable to update email or password")
+		log.Printf("Error decoding body from response: %s\n", err)
+		return
+	}
+
+	if u.Email == "" || u.Password == "" {
+		respondWithError(w, 500, "Unable to update email or password")
+		log.Printf("Email or password not in response body: %s\n", err)
+		return
+	}
+
+	auth_user, err := auth.ValidateJWT(refresh_token, cfg.secret)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		log.Printf("Refresh token does not equal secret string: %s\n", err)
+		return
+	}
+
+	hash_pass, err := auth.HashPassword(u.Password)
+	if err != nil {
+		respondWithError(w, 500, "Unable to update email or password")
+		log.Printf("Error in hashing password: %s\n", err)
+		return
+	}
+
+	update_params := database.UpdateUserEmailandPasswordParams{
+		ID:             auth_user,
+		Email:          u.Email,
+		HashedPassword: hash_pass,
+	}
+
+	db_user, err := cfg.dbqueries.UpdateUserEmailandPassword(r.Context(), update_params)
+	if err != nil {
+		respondWithError(w, 500, "Unable to update email or password")
+		log.Printf("Error in updating email and password function: %s", err)
+		return
+	}
+
+	response_user := User{
+		ID:        db_user.ID,
+		CreatedAt: db_user.CreatedAt,
+		UpdatedAt: db_user.UpdatedAt,
+		Email:     db_user.Email,
+	}
+	respondWithJSON(w, 200, response_user)
+}
+
 func (cfg *apiConfig) refreshHandler(w http.ResponseWriter, r *http.Request) {
 	refresh_token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
@@ -492,6 +550,7 @@ func main() {
 	ServeMux.HandleFunc("POST /api/login", apiCfg.loginHandler)
 	ServeMux.HandleFunc("POST /api/refresh", apiCfg.refreshHandler)
 	ServeMux.HandleFunc("POST /api/revoke", apiCfg.revokeHandler)
+	ServeMux.HandleFunc("PUT /api/users", apiCfg.updateuserHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
