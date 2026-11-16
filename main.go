@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -134,6 +135,61 @@ func (cfg *apiConfig) createchirpHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, 201, response_chirp)
+}
+
+func (cfg *apiConfig) deletechirpHandler(w http.ResponseWriter, r *http.Request) {
+	refresh_token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 401, "Error deleting chirp")
+		log.Printf("Error retrieving refresh token: %s\n\n", err)
+		return
+	}
+
+	auth_user, err := auth.ValidateJWT(refresh_token, cfg.secret)
+	if err != nil {
+		respondWithError(w, 401, "Unable to validate user")
+		log.Printf("Error in authenticating user: %s\n\n", err)
+		return
+	}
+
+	id_uuid, err := uuid.Parse(r.PathValue("chirpID"))
+	if err != nil {
+		respondWithError(w, 401, "Unable to validate user")
+		log.Printf("No chirp id provided in request: %s\n\n", err)
+		return
+	}
+
+	_, err = cfg.dbqueries.RetrieveOneChirp(r.Context(), id_uuid)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, 404, "Chirp not found")
+			log.Printf("No chirp with provided id found: %s\n\n", err)
+			return
+		} else {
+			respondWithError(w, 500, "Unable to delete chirp")
+			log.Printf("Error in sql function RetrieveOneChirp: %s\n\n", err)
+			return
+		}
+	}
+
+	deletechirpparams := database.DeleteChirpParams{
+		ID:     id_uuid,
+		UserID: auth_user,
+	}
+
+	deleted_chirp, err := cfg.dbqueries.DeleteChirp(r.Context(), deletechirpparams)
+	if err != nil {
+		respondWithError(w, 403, "Unable to validate user")
+		log.Printf("Error in finding chirp and user combo: %s\n\n", err)
+		return
+	}
+	if deleted_chirp.ID == uuid.Nil {
+		respondWithError(w, 403, "Unable to validate user")
+		log.Printf("No chirp deleted with DeleteChirp: %s\n\n", err)
+		return
+	}
+
+	respondWithJSON(w, 204, "Chirp successfully deleted")
 }
 
 func (cfg *apiConfig) retrieveallchirpsHandler(w http.ResponseWriter, r *http.Request) {
@@ -551,6 +607,7 @@ func main() {
 	ServeMux.HandleFunc("POST /api/refresh", apiCfg.refreshHandler)
 	ServeMux.HandleFunc("POST /api/revoke", apiCfg.revokeHandler)
 	ServeMux.HandleFunc("PUT /api/users", apiCfg.updateuserHandler)
+	ServeMux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deletechirpHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
