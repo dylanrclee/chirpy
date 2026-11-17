@@ -32,6 +32,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Chirpyred bool      `json:"is_chirpy_red"`
 }
 
 type UserWithPassword struct {
@@ -44,6 +45,13 @@ type UserLogin struct {
 	User
 	Token         string `json:"token"`
 	Refresh_token string `json:"refresh_token"`
+}
+
+type Upgrade struct {
+	Event string `json:"event"`
+	Data  struct {
+		User_id string `json:"user_id"`
+	} `json:"data"`
 }
 
 type TokenResponse struct {
@@ -330,6 +338,7 @@ func (cfg *apiConfig) createuserHandler(w http.ResponseWriter, r *http.Request) 
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		Chirpyred: user.IsChirpyRed.Bool,
 	}
 	respondWithJSON(w, 201, response_user)
 }
@@ -388,6 +397,7 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: db_user.CreatedAt,
 			UpdatedAt: db_user.UpdatedAt,
 			Email:     db_user.Email,
+			Chirpyred: db_user.IsChirpyRed.Bool,
 		},
 		Token:         token,
 		Refresh_token: db_refresh_token.Token,
@@ -453,8 +463,46 @@ func (cfg *apiConfig) updateuserHandler(w http.ResponseWriter, r *http.Request) 
 		CreatedAt: db_user.CreatedAt,
 		UpdatedAt: db_user.UpdatedAt,
 		Email:     db_user.Email,
+		Chirpyred: db_user.IsChirpyRed.Bool,
 	}
 	respondWithJSON(w, 200, response_user)
+}
+
+func (cfg *apiConfig) upgradeuserHandler(w http.ResponseWriter, r *http.Request) {
+	var up Upgrade
+	err := json.NewDecoder(r.Body).Decode(&up)
+	if err != nil {
+		respondWithError(w, 500, "Unable to upgrade user")
+		log.Printf("Error decoding response body %s\n\n", err)
+		return
+	}
+
+	if up.Event != "user.upgraded" {
+		respondWithJSON(w, 204, "")
+		log.Print("Wrong event in respond body\n\n")
+		return
+	} else {
+		parsed_id, err := uuid.Parse(up.Data.User_id)
+		if err != nil {
+			respondWithError(w, 500, "Unable to upgrade user")
+			log.Printf("Error parsing user id from response: %s\n\n", err)
+			return
+		}
+
+		_, err = cfg.dbqueries.UpgradeUserChirpyRed(r.Context(), parsed_id)
+		if err == sql.ErrNoRows {
+			respondWithError(w, 404, "User now found")
+			log.Printf("Unable to find user id in database: %s\n\n", err)
+			return
+		}
+		if err != nil {
+			respondWithError(w, 500, "Unable to update user")
+			log.Printf("Error with UpgradeUserChirpyRed function: %s\n\n", err)
+			return
+		}
+
+		respondWithJSON(w, 204, "")
+	}
 }
 
 func (cfg *apiConfig) refreshHandler(w http.ResponseWriter, r *http.Request) {
@@ -608,6 +656,7 @@ func main() {
 	ServeMux.HandleFunc("POST /api/revoke", apiCfg.revokeHandler)
 	ServeMux.HandleFunc("PUT /api/users", apiCfg.updateuserHandler)
 	ServeMux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deletechirpHandler)
+	ServeMux.HandleFunc("POST /api/polka/webhooks", apiCfg.upgradeuserHandler)
 
 	chripy_server := http.Server{
 		Addr:    ":8080",
