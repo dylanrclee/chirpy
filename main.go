@@ -25,6 +25,7 @@ type apiConfig struct {
 	dbqueries      *database.Queries
 	platform       string
 	secret         string
+	polka_secret   string
 }
 
 type User struct {
@@ -469,8 +470,21 @@ func (cfg *apiConfig) updateuserHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (cfg *apiConfig) upgradeuserHandler(w http.ResponseWriter, r *http.Request) {
+	api_key, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		log.Printf("Error in getting apikey from request: %s\n\n", err)
+		return
+	}
+
+	if api_key != cfg.polka_secret {
+		respondWithError(w, 401, "Unauthorized")
+		log.Printf("APIKey does not equal secret: %s\n\n", err)
+		return
+	}
+
 	var up Upgrade
-	err := json.NewDecoder(r.Body).Decode(&up)
+	err = json.NewDecoder(r.Body).Decode(&up)
 	if err != nil {
 		respondWithError(w, 500, "Unable to upgrade user")
 		log.Printf("Error decoding response body %s\n\n", err)
@@ -634,9 +648,10 @@ func main() {
 
 	ServeMux := http.NewServeMux()
 	apiCfg := apiConfig{
-		dbqueries: dbQueries,
-		platform:  os.Getenv("PLATFORM"),
-		secret:    os.Getenv("SECRET"),
+		dbqueries:    dbQueries,
+		platform:     os.Getenv("PLATFORM"),
+		secret:       os.Getenv("SECRET"),
+		polka_secret: os.Getenv("POLKA_KEY"),
 	}
 
 	dir := http.Dir(".")
