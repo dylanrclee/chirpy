@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -218,6 +219,7 @@ func (cfg *apiConfig) retrieveallchirpsHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	author_id := r.URL.Query().Get("author_id")
+	sort_order := r.URL.Query().Get("sort")
 
 	if author_id == "" {
 		chirps, err := cfg.dbqueries.RetrieveAllChirps(r.Context())
@@ -228,6 +230,19 @@ func (cfg *apiConfig) retrieveallchirpsHandler(w http.ResponseWriter, r *http.Re
 		}
 
 		chirp_list := chirplistmaker(chirps)
+
+		if sort_order != "" {
+			if sort_order == "desc" {
+				sort.Slice(chirp_list, func(i, j int) bool { return chirp_list[i].CreatedAt.After(chirp_list[j].CreatedAt) })
+			}
+
+			if sort_order != "asc" && sort_order != "desc" {
+				respondWithError(w, 400, "Error in sort url text")
+				log.Printf("Error in url sort text: %s\n\n", err)
+				return
+			}
+		}
+
 		respondWithJSON(w, 200, chirp_list)
 
 	} else {
