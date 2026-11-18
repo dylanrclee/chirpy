@@ -202,27 +202,52 @@ func (cfg *apiConfig) deletechirpHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (cfg *apiConfig) retrieveallchirpsHandler(w http.ResponseWriter, r *http.Request) {
-	chirps, err := cfg.dbqueries.RetrieveAllChirps(r.Context())
-	if err != nil {
-		respondWithError(w, 500, "Error retrieving all chirps")
-		log.Printf("Error in retrieveallchirpsHandler: %s", err)
-		return
-	}
-
-	chirp_list := make([]Chirp, len(chirps))
-
-	for i, chirp := range chirps {
-		chirp_list_item := Chirp{
-			ID:        chirp.ID,
-			CreatedAt: chirp.CreatedAt,
-			UpdatedAt: chirp.UpdatedAt,
-			Body:      chirp.Body,
-			UserID:    chirp.UserID,
+	chirplistmaker := func(chirps []database.Chirp) []Chirp {
+		chirp_list := make([]Chirp, len(chirps))
+		for i, chirp := range chirps {
+			chirp_list_item := Chirp{
+				ID:        chirp.ID,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				Body:      chirp.Body,
+				UserID:    chirp.UserID,
+			}
+			chirp_list[i] = chirp_list_item
 		}
-		chirp_list[i] = chirp_list_item
+		return chirp_list
 	}
 
-	respondWithJSON(w, 200, chirp_list)
+	author_id := r.URL.Query().Get("author_id")
+
+	if author_id == "" {
+		chirps, err := cfg.dbqueries.RetrieveAllChirps(r.Context())
+		if err != nil {
+			respondWithError(w, 500, "Error retrieving all chirps")
+			log.Printf("Error in retrieveallchirps sql function: %s\n\n", err)
+			return
+		}
+
+		chirp_list := chirplistmaker(chirps)
+		respondWithJSON(w, 200, chirp_list)
+
+	} else {
+		user_uuid, err := uuid.Parse(author_id)
+		if err != nil {
+			respondWithError(w, 500, "Error retrieving chirps")
+			log.Printf("Error parsing author_id to uuid: %s\n\n", err)
+			return
+		}
+
+		chirps, err := cfg.dbqueries.RetrieveAllChirpsfromUser(r.Context(), user_uuid)
+		if err != nil {
+			respondWithError(w, 500, "Error retrieving all chirps")
+			log.Printf("Error in retrieveallchirpsfromuser sql function %s\n\n", err)
+			return
+		}
+
+		chirp_list := chirplistmaker(chirps)
+		respondWithJSON(w, 200, chirp_list)
+	}
 }
 
 func (cfg *apiConfig) retrieveonechirpHandler(w http.ResponseWriter, r *http.Request) {
